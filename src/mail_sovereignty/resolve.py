@@ -612,65 +612,73 @@ async def resolve_municipality_domain(
 
     return entry
 
+def fetch_ancpi_uat() -> dict[str, dict[str, str]]:
+    """Load the Romanian UAT's from the unitati_administrative.geojson file.
+    This file is taken from https://open-data-ancpi.hub.arcgis.com/datasets/ancpi::au-unit%C4%83%C8%9Bi-administrative/about
+    """
 
-async def run(output_path: Path, overrides_path: Path, date: str | None = None) -> None:
-    overrides = load_overrides(overrides_path)
+    logger.info("Fetching UAT's from ANCPI GeoJSON")
+    with open("unitati_administrative.geojson", encoding="utf-8") as f:
+        data = json.load(f)
 
-    # BFS API is the canonical municipality list
-    # TODO: remove this
-    bfs_municipalities = {}
+    logger.info("ANCPI: {} results", len(data["features"]))
 
-    # Wikidata provides website URLs
-    wikidata = await fetch_wikidata()
+    uats = {}
+    for row in data["features"]:
+        props = row.get("properties", {})
+        siruta = props.get("nationalCode", "")
+        name = props.get("name_1", {})
 
-    # Merge: for each BFS municipality, attach Wikidata website if available
-    municipalities: dict[str, dict[str, Any]] = {}
-    for bfs, bfs_entry in bfs_municipalities.items():
+        if siruta not in uats:
+            uats[siruta] = {
+                "siruta": siruta,
+                "name": name,
+            }
+
+    return uats
+
+async def run(output_path: Path) -> None:
+    ancpi_uat = fetch_ancpi_uat()
+
+    # Wikidata provides website URLs and email addresses
+    wikidata_uat = await fetch_wikidata()
+
+    # Merge: for each ancpi uat, attach Wikidata website and email if available
+    uats: dict[str, dict[str, Any]] = {}
+    for siruta, name in ancpi_uat.items():
         entry: dict[str, Any] = {
-            "bfs": bfs,
-            "name": bfs_entry["name"],
-            "canton": bfs_entry["canton"],
+            "siruta": siruta,
+            "name": name,
             "website": "",
+            "email": "",
         }
-        if bfs in wikidata:
-            entry["website"] = wikidata[bfs].get("website", "")
-        municipalities[bfs] = entry
+        if siruta in wikidata_uat:
+            entry["website"] = wikidata_uat[siruta].get("website", "")
+            entry["email"] = wikidata_uat[siruta].get("email", "")
+        uats[siruta] = entry
 
-    # Log municipalities in BFS but missing from Wikidata
-    bfs_only = set(bfs_municipalities) - set(wikidata)
-    if bfs_only:
+    # Log municipalities in ancpi but missing from Wikidata
+    ancpi_only = set(ancpi_uat) - set(wikidata_uat)
+    if ancpi_only:
         logger.warning(
-            "{} municipalities in BFS but missing from Wikidata", len(bfs_only)
+            "{} municipalities in ANCPI but missing from Wikidata", len(ancpi_only)
         )
-        for bfs in sorted(bfs_only, key=int):
-            m = bfs_municipalities[bfs]
-            logger.warning("    {:>5}  {}", bfs, m["name"])
-            municipalities[bfs]["bfs_only"] = True
+        for siruta in sorted(ancpi_only, key=int):
+            m = ancpi_uat[siruta]
+            logger.warning("    {:>5}  {}", siruta, m["name"])
+            uats[siruta]["siruta_only"] = True
 
     # Log municipalities in Wikidata but not in BFS (potentially dissolved)
-    wikidata_only = set(wikidata) - set(bfs_municipalities)
+    wikidata_only = set(wikidata_uat) - set(ancpi_uat)
     if wikidata_only:
         logger.warning(
-            "{} municipalities in Wikidata but missing from BFS", len(wikidata_only)
+            "{} municipalities in Wikidata but missing from ANCPI", len(wikidata_only)
         )
-        for bfs in sorted(wikidata_only, key=int):
-            m = wikidata[bfs]
-            logger.warning("    {:>5}  {}", bfs, m["name"])
+        for siruta in sorted(wikidata_only, key=int):
+            m = wikidata_uat[siruta]
+            logger.warning("    {:>5}  {}", siruta, m["name"])
 
-    # Add municipalities that are only in overrides (missing from both)
-    for bfs, override in overrides.items():
-        if bfs not in municipalities and "name" in override:
-            municipalities[bfs] = {
-                "bfs": bfs,
-                "name": override["name"],
-                "website": "",
-                "canton": override.get("canton", ""),
-            }
-            logger.info(
-                "Added override-only municipality: {} {}", bfs, override["name"]
-            )
-
-    total = len(municipalities)
+    total = len(uats)
     logger.info("Resolving email domains for {} municipalities", total)
 
     # Use a shared client for scraping with limited concurrency
