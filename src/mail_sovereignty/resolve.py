@@ -319,7 +319,7 @@ async def fetch_wikidata() -> dict[str, dict[str, str]]:
         siruta = row.get("siruta", {}).get("value", "")
         name = row.get("itemLabel", {}).get("value", f"SIRUTA-{siruta}")
         website = row.get("website", {}).get("value", "")
-        email = row.get("rmail", {}).get("value", "")
+        email = row.get("email", {}).get("value", "")
 
         if siruta not in uats:
             uats[siruta] = {
@@ -328,8 +328,11 @@ async def fetch_wikidata() -> dict[str, dict[str, str]]:
                 "website": website,
                 "email": email,
             }
-        elif not uats[siruta]["website"] and website:
-            uats[siruta]["website"] = website
+        else:
+            if not uats[siruta]["website"] and website:
+                uats[siruta]["website"] = website
+            if not uats[siruta]["email"] and email:
+                uats[siruta]["email"] = email
 
     logger.info(
         "Wikidata: {} uats, {} with websites",
@@ -657,29 +660,29 @@ async def run(output_path: Path) -> None:
             entry["email"] = wikidata_uat[siruta].get("email", "")
         uats[siruta] = entry
 
-    # Log municipalities in ancpi but missing from Wikidata
+    # Log AUTs in ancpi but missing from Wikidata
     ancpi_only = set(ancpi_uat) - set(wikidata_uat)
     if ancpi_only:
         logger.warning(
-            "{} municipalities in ANCPI but missing from Wikidata", len(ancpi_only)
+            "{} AUTs in ANCPI but missing from Wikidata", len(ancpi_only)
         )
         for siruta in sorted(ancpi_only, key=int):
             m = ancpi_uat[siruta]
             logger.warning("    {:>5}  {}", siruta, m["name"])
             uats[siruta]["siruta_only"] = True
 
-    # Log municipalities in Wikidata but not in BFS (potentially dissolved)
+    # Log AUTs in Wikidata but not in BFS (potentially dissolved)
     wikidata_only = set(wikidata_uat) - set(ancpi_uat)
     if wikidata_only:
         logger.warning(
-            "{} municipalities in Wikidata but missing from ANCPI", len(wikidata_only)
+            "{} AUTs in Wikidata but missing from ANCPI", len(wikidata_only)
         )
         for siruta in sorted(wikidata_only, key=int):
             m = wikidata_uat[siruta]
             logger.warning("    {:>5}  {}", siruta, m["name"])
 
     total = len(uats)
-    logger.info("Resolving email domains for {} municipalities", total)
+    logger.info("Resolving email domains for {} AUTs", total)
 
     # Use a shared client for scraping with limited concurrency
     scrape_semaphore = asyncio.Semaphore(CONCURRENCY_POSTPROCESS)

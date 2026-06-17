@@ -8,12 +8,11 @@ SELECT
   ?siruta
   (SAMPLE(?label) AS ?itemLabel)
   (SAMPLE(?website) AS ?website)
-  (SAMPLE(?email) as ?email)
+  (MAX(?emailValue) AS ?email)
 WHERE {
   ?item wdt:P31 ?type .              # instance of
   ?type wdt:P279* wd:Q697379 .       # subclass of: administrative territorial entity of Romania
   ?item wdt:P843 ?siruta .           # contains SIRUTA code (Romanian municipality code)
-  ?item wdt:P968 ?email .            # contains an email address
 
   FILTER NOT EXISTS {                # exclude dissolved municipalities
     ?item wdt:P576 ?dissolved .
@@ -32,7 +31,16 @@ WHERE {
     ?item wdt:P31 wd:Q15921247 .      # exclude constituent locality
   }
 
+  FILTER NOT EXISTS {
+    ?item wdt:P31 wd:Q1776764 .       # exclude counties
+  }
+
+  FILTER NOT EXISTS {
+    ?item wdt:P31 wd:Q10864048 .      # exclude first-level administrative divisions
+  }
+
   OPTIONAL { ?item wdt:P856 ?website . }
+  OPTIONAL { ?item wdt:P968 ?emailValue . }
   OPTIONAL { ?item rdfs:label ?label . FILTER(LANG(?label) = "ro") }
 }
 GROUP BY ?siruta
