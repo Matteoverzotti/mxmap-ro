@@ -12,8 +12,8 @@ function initMap(elementId) {
   }
 
   var map = L.map(elementId, {
-    center: [46.8, 8.2],
-    zoom: 8,
+    center: [45.816289, 24.964484],
+    zoom: 7,
     minZoom: 7,
     maxZoom: 14,
     renderer: L.canvas()
