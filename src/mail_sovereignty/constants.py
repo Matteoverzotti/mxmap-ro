@@ -4,67 +4,78 @@ BFS_API_URL = "https://www.agvchapp.bfs.admin.ch/api/communes/snapshot"
 
 SPARQL_URL = "https://query.wikidata.org/sparql"
 SPARQL_QUERY = """
-SELECT ?item ?itemLabel ?bfs ?website ?cantonLabel WHERE {
-  ?item wdt:P31 wd:Q70208 .          # instance of: municipality of Switzerland
-  ?item wdt:P771 ?bfs .              # Swiss municipality code (BFS number)
-  FILTER NOT EXISTS {                  # exclude dissolved municipalities
+SELECT
+  ?siruta
+  (SAMPLE(?label) AS ?itemLabel)
+  (SAMPLE(?website) AS ?website)
+  (SAMPLE(?email) as ?email)
+WHERE {
+  ?item wdt:P31 ?type .              # instance of
+  ?type wdt:P279* wd:Q697379 .       # subclass of: administrative territorial entity of Romania
+  ?item wdt:P843 ?siruta .           # contains SIRUTA code (Romanian municipality code)
+  ?item wdt:P968 ?email .            # contains an email address
+
+  FILTER NOT EXISTS {                # exclude dissolved municipalities
     ?item wdt:P576 ?dissolved .
     FILTER(?dissolved <= NOW())
   }
-  FILTER NOT EXISTS {                  # exclude municipalities with ended P31 statement
-    ?item p:P31 ?stmt .
-    ?stmt ps:P31 wd:Q70208 .
-    ?stmt pq:P582 ?endTime .
-    FILTER(?endTime <= NOW())
-  }
+
   FILTER NOT EXISTS {                  # exclude municipalities replaced by a successor
     ?item wdt:P1366 ?successor .
   }
+
+  FILTER NOT EXISTS {
+    ?item wdt:P31 wd:Q34841063 .      # exclude seat of the local council
+  }
+
+  FILTER NOT EXISTS {
+    ?item wdt:P31 wd:Q15921247 .      # exclude constituent locality
+  }
+
   OPTIONAL { ?item wdt:P856 ?website . }
-  OPTIONAL { ?item wdt:P131+ ?canton .
-             ?canton wdt:P31 wd:Q23058 . }
-  SERVICE wikibase:label { bd:serviceParam wikibase:language "de,fr,it,rm,en" . }
+  OPTIONAL { ?item rdfs:label ?label . FILTER(LANG(?label) = "ro") }
 }
-ORDER BY xsd:integer(?bfs)
+GROUP BY ?siruta
+ORDER BY xsd:integer(?siruta)
 """
 
 EMAIL_RE = re.compile(r"[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}")
 TYPO3_RE = re.compile(
     r"linkTo_UnCryptMailto\((?:['\"]|%27|%22)([^'\"]+?)(?:['\"]|%27|%22)"
 )
-SKIP_DOMAINS = {
-    "example.com",
-    "example.ch",
-    "sentry.io",
-    "w3.org",
-    "gstatic.com",
-    "googleapis.com",
-    "schema.org",
-    # Generic email providers (not municipality-specific)
-    "gmail.com",
-    "hotmail.com",
-    "hotmail.ch",
-    "outlook.com",
-    "gmx.ch",
-    "bluewin.ch",
-    "yahoo.com",
-    # Shared hosting / CMS / web agencies
-    "domain.com",
-    "pregny-chambesy.ch",  # shared Abaco CMS template
-    "netconsult.ch",
-    "bbf.ch",
-    "dp-wired.de",
-    # Web framework / analytics
-    "google.com",
-    "group.calendar.google.com",
-    # Generic / unrelated services
-    "mail.com",
-    "wordpress.org",
-    "defiant.com",
-    "schedulista.com",
-    "zurich-airport.com",
-    "avasad.ch",
-}
+# SKIP_DOMAINS = {
+#     "example.com",
+#     "example.ch",
+#     "sentry.io",
+#     "w3.org",
+#     "gstatic.com",
+#     "googleapis.com",
+#     "schema.org",
+#     # Generic email providers (not municipality-specific)
+#     "gmail.com",
+#     "hotmail.com",
+#     "hotmail.ch",
+#     "outlook.com",
+#     "gmx.ch",
+#     "bluewin.ch",
+#     "yahoo.com",
+#     # Shared hosting / CMS / web agencies
+#     "domain.com",
+#     "pregny-chambesy.ch",  # shared Abaco CMS template
+#     "netconsult.ch",
+#     "bbf.ch",
+#     "dp-wired.de",
+#     # Web framework / analytics
+#     "google.com",
+#     "group.calendar.google.com",
+#     # Generic / unrelated services
+#     "mail.com",
+#     "wordpress.org",
+#     "defiant.com",
+#     "schedulista.com",
+#     "zurich-airport.com",
+#     "avasad.ch",
+# }
 
 SUBPAGES = [
     "/kontakt",

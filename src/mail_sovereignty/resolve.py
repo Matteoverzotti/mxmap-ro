@@ -12,12 +12,11 @@ import httpx
 import stamina
 from loguru import logger
 
-from mail_sovereignty.bfs_api import fetch_bfs_municipalities
 from mail_sovereignty.constants import (
     CANTON_ABBREVIATIONS,
     CONCURRENCY_POSTPROCESS,
     EMAIL_RE,
-    SKIP_DOMAINS,
+    # SKIP_DOMAINS,
     SPARQL_QUERY,
     SPARQL_URL,
     SUBPAGES,
@@ -302,39 +301,42 @@ async def _fetch_sparql(
 
 
 async def fetch_wikidata() -> dict[str, dict[str, str]]:
-    """Query Wikidata for all Swiss municipalities."""
-    logger.info("Fetching municipalities from Wikidata")
+    """Query Wikidata for all Romanian UTA's."""
+
+    logger.info("Fetching UTA's from Wikidata")
     headers = {
         "Accept": "application/sparql-results+json",
-        "User-Agent": "MXmap/1.0 (https://github.com/davidhuser/mxmap)",
+        "User-Agent": "MXmap-RO/1.0 (https://github.com/Matteoverzotti/mxmap)",
     }
     async with httpx.AsyncClient(timeout=120) as client:
         r = await _fetch_sparql(client, SPARQL_URL, {"query": SPARQL_QUERY}, headers)
         data = r.json()
 
-    municipalities = {}
-    for row in data["results"]["bindings"]:
-        bfs = row["bfs"]["value"]
-        name = row.get("itemLabel", {}).get("value", f"BFS-{bfs}")
-        website = row.get("website", {}).get("value", "")
-        canton = row.get("cantonLabel", {}).get("value", "")
+    logger.info("Wikidata: {} results", len(data["results"]["bindings"]))
 
-        if bfs not in municipalities:
-            municipalities[bfs] = {
-                "bfs": bfs,
+    utas = {}
+    for row in data["results"]["bindings"]:
+        siruta = row.get("siruta", {}).get("value", "")
+        name = row.get("itemLabel", {}).get("value", f"SIRUTA-{siruta}")
+        website = row.get("website", {}).get("value", "")
+        email = row.get("rmail", {}).get("value", "")
+
+        if siruta not in utas:
+            utas[siruta] = {
+                "siruta": siruta,
                 "name": name,
                 "website": website,
-                "canton": canton,
+                "email": email,
             }
-        elif not municipalities[bfs]["website"] and website:
-            municipalities[bfs]["website"] = website
+        elif not utas[siruta]["website"] and website:
+            utas[siruta]["website"] = website
 
     logger.info(
-        "Wikidata: {} municipalities, {} with websites",
-        len(municipalities),
-        sum(1 for m in municipalities.values() if m["website"]),
+        "Wikidata: {} utas, {} with websites",
+        len(utas),
+        sum(1 for m in utas.values() if m["website"]),
     )
-    return municipalities
+    return utas
 
 
 def load_overrides(overrides_path: Path) -> dict[str, dict[str, str]]:
@@ -387,15 +389,15 @@ def extract_email_domains(html: str) -> set[str]:
     # simple @ in body
     for email in EMAIL_RE.findall(html):
         domain = email.split("@")[1].lower()
-        if domain not in SKIP_DOMAINS:
-            domains.add(domain)
+        # if domain not in SKIP_DOMAINS:
+        domains.add(domain)
 
     # mailto:
     for email in re.findall(r'mailto:([^">\s?]+)', html):
         if "@" in email:
             domain = email.split("@")[1].lower().rstrip("\\/.")
-            if domain not in SKIP_DOMAINS:
-                domains.add(domain)
+            # if domain not in SKIP_DOMAINS:
+            domains.add(domain)
 
     # typo3 obfuscated emails
     for encoded in TYPO3_RE.findall(html):
@@ -404,8 +406,8 @@ def extract_email_domains(html: str) -> set[str]:
             decoded = decoded.replace("mailto:", "")
             if "@" in decoded and EMAIL_RE.search(decoded):
                 domain = decoded.split("@")[1].lower()
-                if domain not in SKIP_DOMAINS:
-                    domains.add(domain)
+                # if domain not in SKIP_DOMAINS:
+                domains.add(domain)
                 break
 
     # user(at)domain.ch and user[at]domain.ch variants
@@ -415,8 +417,8 @@ def extract_email_domains(html: str) -> set[str]:
         normalized = re.sub(r"\s*[\[(]at[\])]\s*", "@", match, flags=re.IGNORECASE)
         if "@" in normalized:
             domain = normalized.split("@")[1].lower()
-            if domain not in SKIP_DOMAINS:
-                domains.add(domain)
+            # if domain not in SKIP_DOMAINS:
+            domains.add(domain)
 
     return {d for d in domains if _is_valid_domain(d)}
 
@@ -615,7 +617,8 @@ async def run(output_path: Path, overrides_path: Path, date: str | None = None) 
     overrides = load_overrides(overrides_path)
 
     # BFS API is the canonical municipality list
-    bfs_municipalities = await fetch_bfs_municipalities(date)
+    # TODO: remove this
+    bfs_municipalities = {}
 
     # Wikidata provides website URLs
     wikidata = await fetch_wikidata()
