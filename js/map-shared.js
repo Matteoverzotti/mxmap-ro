@@ -85,26 +85,25 @@ function showGenerated(dnsData) {
   }
 }
 
-function addLakes(map, topo, lakeColor) {
-  if (topo.objects.lakes) {
-    var lakes = topojson.feature(topo, topo.objects.lakes);
-    return L.geoJSON(lakes, {
-      interactive: false,
-      style: { fillColor: lakeColor, fillOpacity: 1, weight: 0, color: 'transparent' }
-    }).addTo(map);
-  }
-  return null;
-}
-
 async function fetchMapData() {
-  var responses = await Promise.all([
-    fetch('https://unpkg.com/swiss-maps@4.7.0/2026/ch-combined.json'),
-    fetch('data.min.json')
+  const responses = await Promise.all([
+    fetch('unitati_administrative.geojson'),
+    // fetch('data.json')
   ]);
   return {
-    topo: await responses[0].json(),
-    dnsData: await responses[1].json()
+    topology: await responses[0].json(),
+    // dnsData: await responses[1].json()
   };
+}
+
+function getAdministrativeUnits(topology) {
+  if (topology.type === 'FeatureCollection') {
+    return topology;
+  }
+  if (topology.objects && topology.objects.municipalities && typeof topojson !== 'undefined') {
+    return topojson.feature(topology, topology.objects.municipalities);
+  }
+  throw new Error('Unsupported administrative unit topology');
 }
 
 function removeLoading() {

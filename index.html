@@ -360,28 +360,31 @@ window.toggleSection = function(el) {
 
 var muni = {};
 var muniLayer;
-var lakeLayer;
+
+function getAdminUnitCode(feature) {
+  return feature.properties.nationalCode;
+}
+
+function getAdminUnitName(feature) {
+  return feature.properties.name_1;
+}
+
+function getAdminUnitType(feature) {
+  return feature.properties.nationalLevelName_1;
+}
 
 function toggleColorScheme() {
   var isDefault = CATEGORY_COLORS === COLOR_SCHEMES.default;
   CATEGORY_COLORS = isDefault ? COLOR_SCHEMES.colorblind : COLOR_SCHEMES.default;
 
   muniLayer.eachLayer(function (layer) {
-    var bfs = String(layer.feature.id);
-    var m = muni[bfs];
+    var code = getAdminUnitCode(layer.feature);
+    var m = muni[code];
     layer.setStyle({ fillColor: getColor(m) });
   });
 
-  if (lakeLayer) {
-    lakeLayer.setStyle({ fillColor: CATEGORY_COLORS.lake });
-  }
-
   document.querySelectorAll('.legend-swatch').forEach(function (el) {
-    if (el.dataset.lake) {
-      el.style.background = CATEGORY_COLORS.lake;
-    } else {
-      el.style.background = CATEGORY_COLORS[el.dataset.cat][el.dataset.level];
-    }
+    el.style.background = CATEGORY_COLORS[el.dataset.cat][el.dataset.level];
   });
 
   var btn = document.querySelector('.color-toggle');
@@ -398,9 +401,9 @@ function legendCategoryHtml(label, colors, count, catKey, levels) {
 }
 
 async function loadData() {
-  const { topo, dnsData } = await fetchMapData();
-  muni = dnsData.municipalities;
-  showGenerated(dnsData);
+  const { topology, _ } = await fetchMapData();
+  muni = {};
+  // showGenerated(dnsData);
 
   // Count by jurisdiction and confidence level
   const catCounts = { 'us-cloud': 0, 'swiss-based': 0 };
@@ -441,16 +444,13 @@ async function loadData() {
   document.querySelector('.legend-toggle').addEventListener('click', toggleLegend);
   document.querySelector('.color-toggle').addEventListener('click', toggleColorScheme);
 
-  // Render lakes
-  lakeLayer = addLakes(map, topo, CATEGORY_COLORS.lake);
-
-  // Render municipalities
-  const geojson = topojson.feature(topo, topo.objects.municipalities);
+  // Render administrative units
+  const geojson = getAdministrativeUnits(topology);
 
   muniLayer = L.geoJSON(geojson, {
     style: function (feature) {
-      const bfs = String(feature.id);
-      const m = muni[bfs];
+      const code = getAdminUnitCode(feature);
+      const m = muni[code];
       return {
         fillColor: getColor(m),
         weight: 0.6,
@@ -459,10 +459,14 @@ async function loadData() {
       };
     },
     onEachFeature: function (feature, layer) {
-      const bfs = String(feature.id);
-      const m = muni[bfs];
+      const code = getAdminUnitCode(feature);
+      const m = muni[code];
       if (!m) {
-        layer.bindPopup(`<div class="info-popup"><strong>BFS ${bfs}</strong><br>No data</div>`);
+        const unitName = escapeHtml(getAdminUnitName(feature));
+        const unitType = escapeHtml(getAdminUnitType(feature));
+        const codeLabel = code ? `National code ${escapeHtml(code)}` : 'No national code';
+        const subtitle = unitType ? `${unitType} &middot; ${codeLabel}` : codeLabel;
+        layer.bindPopup(`<div class="info-popup"><strong>${unitName}</strong><br>${subtitle}<br>No email data</div>`);
         return;
       }
       const color = getColor(m);
@@ -507,7 +511,7 @@ async function loadData() {
         signalsSection = `<div class="popup-section"><div class="popup-toggle" onclick="window.toggleSection(this)">Classification signals</div><div class="popup-section-body" style="display:none"><span class="popup-empty">No classification signals</span></div></div>`;
       }
 
-      const eName = escapeHtml(m.name);
+      const eName = escapeHtml(m.name || getAdminUnitName(feature));
       const cantonCode = CANTON_CODES[m.canton] || '';
       const nameDisplay = cantonCode ? `${eName} (${cantonCode})` : eName;
       const eDomain = escapeHtml(m.domain || 'unknown');
