@@ -301,9 +301,9 @@ async def _fetch_sparql(
 
 
 async def fetch_wikidata() -> dict[str, dict[str, str]]:
-    """Query Wikidata for all Romanian UTA's."""
+    """Query Wikidata for all Romanian UAT's."""
 
-    logger.info("Fetching UTA's from Wikidata")
+    logger.info("Fetching UAT's from Wikidata")
     headers = {
         "Accept": "application/sparql-results+json",
         "User-Agent": "MXmap-RO/1.0 (https://github.com/Matteoverzotti/mxmap)",
@@ -314,29 +314,29 @@ async def fetch_wikidata() -> dict[str, dict[str, str]]:
 
     logger.info("Wikidata: {} results", len(data["results"]["bindings"]))
 
-    utas = {}
+    uats = {}
     for row in data["results"]["bindings"]:
         siruta = row.get("siruta", {}).get("value", "")
         name = row.get("itemLabel", {}).get("value", f"SIRUTA-{siruta}")
         website = row.get("website", {}).get("value", "")
         email = row.get("rmail", {}).get("value", "")
 
-        if siruta not in utas:
-            utas[siruta] = {
+        if siruta not in uats:
+            uats[siruta] = {
                 "siruta": siruta,
                 "name": name,
                 "website": website,
                 "email": email,
             }
-        elif not utas[siruta]["website"] and website:
-            utas[siruta]["website"] = website
+        elif not uats[siruta]["website"] and website:
+            uats[siruta]["website"] = website
 
     logger.info(
-        "Wikidata: {} utas, {} with websites",
-        len(utas),
-        sum(1 for m in utas.values() if m["website"]),
+        "Wikidata: {} uats, {} with websites",
+        len(uats),
+        sum(1 for m in uats.values() if m["website"]),
     )
-    return utas
+    return uats
 
 
 def load_overrides(overrides_path: Path) -> dict[str, dict[str, str]]:
