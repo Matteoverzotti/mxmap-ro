@@ -16,9 +16,7 @@ def resolve_domains() -> None:
 
     setup_logging(args.verbose)
 
-    asyncio.run(
-        run(Path("municipality_domains.json"))
-    )
+    asyncio.run(run(Path("municipality_domains.json")))
 
 
 def classify_providers() -> None:
