@@ -22,6 +22,12 @@ jobs:
     steps:
       - uses: actions/checkout@v6
       - uses: actions/configure-pages@v5
+      - name: Download ANCPI administrative units
+        run: |
+          curl --fail --location --retry 3 --retry-delay 5 \
+            --output unitati_administrative.geojson \
+            'https://hub.arcgis.com/api/v3/datasets/466b7199c19f4904831e14bc7f407af9_1/downloads/data?format=geojson&spatialRefId=4326&where=1%3D1'
+          test -s unitati_administrative.geojson
       - uses: actions/upload-pages-artifact@v4
         with:
           path: .
