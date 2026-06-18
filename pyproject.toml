@@ -9,10 +9,10 @@ description = "Interactive map showing where Swiss municipalities host their ema
 readme = "README.md"
 requires-python = ">=3.13"
 dependencies = [
-    "dnspython>=2.8.0",
     "httpx>=0.28.1",
     "loguru>=0.7.3",
     "pydantic>=2.0",
+    "scapy>=2.6.1",
     "stamina>=25.2.0",
 ]
 
