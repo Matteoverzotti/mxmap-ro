@@ -15,7 +15,6 @@ from mail_sovereignty.resolve import (
     extract_email_domains,
     fetch_wikidata,
     guess_domains,
-    load_overrides,
     resolve_municipality_domain,
     run,
     score_domain_sources,
@@ -392,22 +391,6 @@ class TestFetchWikidata:
 
         result = await fetch_wikidata()
         assert len(result) == 1
-
-
-# ── load_overrides() ─────────────────────────────────────────────────
-
-
-class TestLoadOverrides:
-    def test_load_existing(self, tmp_path):
-        p = tmp_path / "overrides.json"
-        p.write_text('{"261": {"domain": "zuerich.ch", "reason": "test"}}')
-        result = load_overrides(p)
-        assert "261" in result
-        assert result["261"]["domain"] == "zuerich.ch"
-
-    def test_load_nonexistent(self, tmp_path):
-        result = load_overrides(tmp_path / "nonexistent.json")
-        assert result == {}
 
 
 # ── decrypt_typo3() ──────────────────────────────────────────────────

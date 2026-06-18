@@ -2,7 +2,6 @@ import asyncio
 import json
 import re
 import ssl
-import time
 import warnings
 from pathlib import Path
 from typing import Any
