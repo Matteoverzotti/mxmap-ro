@@ -26,6 +26,15 @@ from mail_sovereignty.dns import lookup_mx
 from mail_sovereignty.classifier import classify
 
 
+ANCPI_GEOJSON_PATH = Path("unitati_administrative.geojson")
+ANCPI_GEOJSON_URL = (
+    "https://hub.arcgis.com/api/v3/datasets/"
+    "466b7199c19f4904831e14bc7f407af9_1/downloads/data"
+    "?format=geojson&spatialRefId=4326&where=1%3D1"
+)
+DOWNLOAD_CHUNK_SIZE = 1024 * 1024
+
+
 def url_to_domain(url: str) -> str:
     """Extract the base domain from a URL."""
     assert url, "URL must not be empty"
@@ -598,13 +607,50 @@ async def resolve_municipality_domain(
 
     return entry
 
+
+def ensure_ancpi_geojson(path: Path = ANCPI_GEOJSON_PATH) -> Path:
+    """Download the ANCPI GeoJSON cache if it is not already present."""
+    if path.exists():
+        return path
+
+    tmp_path = path.with_suffix(f"{path.suffix}.tmp")
+    logger.info("ANCPI GeoJSON missing; downloading {}", ANCPI_GEOJSON_URL)
+
+    headers = {
+        "Accept": "application/geo+json,application/json,*/*",
+        "User-Agent": "mxmap-ro/1.0",
+        "Referer": "https://open-data-ancpi.hub.arcgis.com/",
+    }
+    try:
+        with httpx.stream(
+            "GET",
+            ANCPI_GEOJSON_URL,
+            headers=headers,
+            follow_redirects=True,
+            timeout=300,
+        ) as response:
+            response.raise_for_status()
+            with tmp_path.open("wb") as f:
+                for chunk in response.iter_bytes(DOWNLOAD_CHUNK_SIZE):
+                    f.write(chunk)
+        tmp_path.replace(path)
+    except Exception:
+        tmp_path.unlink(missing_ok=True)
+        raise
+
+    logger.info("Downloaded ANCPI GeoJSON to {}", path)
+    return path
+
+
 def fetch_ancpi_uat() -> dict[str, dict[str, str]]:
     """Load the Romanian UAT's from the unitati_administrative.geojson file.
-    This file is taken from https://open-data-ancpi.hub.arcgis.com/datasets/ancpi::au-unit%C4%83%C8%9Bi-administrative/about
+    This file is downloaded from the ANCPI ArcGIS Hub when missing.
     """
 
-    logger.info("Fetching UAT's from ANCPI GeoJSON")
-    with open("unitati_administrative.geojson", encoding="utf-8") as f:
+    geojson_path = ensure_ancpi_geojson()
+
+    logger.info("Loading UAT's from ANCPI GeoJSON")
+    with geojson_path.open(encoding="utf-8") as f:
         data = json.load(f)
 
     logger.info("ANCPI: {} results", len(data["features"]))

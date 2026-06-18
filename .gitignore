@@ -159,6 +159,9 @@ venv.bak/
 .dmypy.json
 dmypy.json
 
+# Large ANCPI topology cache; downloaded by the resolver when missing.
+unitati_administrative.geojson
+
 # Pyre type checker
 .pyre/
 
