@@ -112,18 +112,23 @@ const CANTON_CODES = {
   'Kanton Jura': 'JU'
 };
 const LABELS = {
+  ms365:          'Microsoft 365',
   microsoft:      'Microsoft 365',
   google:         'Google Workspace',
   aws:            'Amazon Web Services',
   infomaniak:     'Infomaniak',
   'swiss-isp':    'Swiss ISP',
   'independent':  'Self-hosted / Other',
+  none:           'No email data',
   unknown:        'Unknown'
 };
 
 function effectiveCategory(m) {
-  if (!m || !m.category || m.category === 'unknown') return null;
-  return m.category;
+  if (!m) return null;
+  if (m.category && m.category !== 'unknown') return m.category;
+  if (['ms365', 'microsoft', 'google', 'aws'].includes(m.provider)) return 'us-cloud';
+  if (['independent', 'infomaniak', 'swiss-isp'].includes(m.provider)) return 'swiss-based';
+  return null;
 }
 
 function confidenceLevel(confidence) {
@@ -401,9 +406,9 @@ function legendCategoryHtml(label, colors, count, catKey, levels) {
 }
 
 async function loadData() {
-  const { topology, _ } = await fetchMapData();
-  muni = {};
-  // showGenerated(dnsData);
+  const { topology, dnsData } = await fetchMapData();
+  muni = dnsData;
+  showGenerated(dnsData);
 
   // Count by jurisdiction and confidence level
   const catCounts = { 'us-cloud': 0, 'swiss-based': 0 };
@@ -431,7 +436,7 @@ async function loadData() {
       '<button class="legend-toggle" aria-label="Toggle legend" aria-expanded="' + (!isMobile) + '">' + (isMobile ? 'Legend \u25B8' : '') + '</button>' +
       '<div class="legend-content">' +
       legendCategoryHtml('US Cloud', CATEGORY_COLORS['us-cloud'], catCounts['us-cloud'], 'us-cloud', levelCounts['us-cloud']) +
-      legendCategoryHtml('Swiss Based', CATEGORY_COLORS['swiss-based'], catCounts['swiss-based'], 'swiss-based', levelCounts['swiss-based']) +
+      legendCategoryHtml('Independent / Local', CATEGORY_COLORS['swiss-based'], catCounts['swiss-based'], 'swiss-based', levelCounts['swiss-based']) +
       '<div class="legend-group legend-other">' +
       '<i class="legend-swatch" data-lake="1" style="background:' + CATEGORY_COLORS.lake + '"></i>Lake (not a municipality)' +
       '</div>' +

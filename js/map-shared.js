@@ -88,11 +88,11 @@ function showGenerated(dnsData) {
 async function fetchMapData() {
   const responses = await Promise.all([
     fetch('unitati_administrative.geojson'),
-    // fetch('data.json')
+    fetch('municipality_domains.json')
   ]);
   return {
     topology: await responses[0].json(),
-    // dnsData: await responses[1].json()
+    dnsData: await responses[1].json()
   };
 }
 
