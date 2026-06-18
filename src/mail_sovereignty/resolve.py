@@ -2,7 +2,6 @@ import asyncio
 import json
 import re
 import ssl
-import time
 import warnings
 from pathlib import Path
 from typing import Any
@@ -44,6 +43,7 @@ def url_to_domain(url: str) -> str:
     if host.startswith("www."):
         host = host[4:]
     return host
+
 
 def email_to_domain(email: str) -> str:
     """Extract the domain from an email address."""
@@ -669,11 +669,14 @@ def fetch_ancpi_uat() -> dict[str, dict[str, str]]:
 
     return uats
 
+
 async def scan_uat(uat: dict[str, Any], semaphore: asyncio.Semaphore) -> dict[str, Any]:
     """Scan a single municipality for email provider info."""
     async with semaphore:
         if not uat.get("website") and not uat.get("email"):
-            logger.info("Skipping UAT {} ({}): no website or email", uat["siruta"], uat["name"])
+            logger.info(
+                "Skipping UAT {} ({}): no website or email", uat["siruta"], uat["name"]
+            )
             return {
                 "siruta": uat["siruta"],
                 "name": uat["name"],
@@ -684,7 +687,7 @@ async def scan_uat(uat: dict[str, Any], semaphore: asyncio.Semaphore) -> dict[st
                 "classification_confidence": 0.0,
                 "classification_signals": [],
             }
-        
+
         domain = ""
         if uat.get("email"):
             domain = email_to_domain(uat["email"])
@@ -693,7 +696,7 @@ async def scan_uat(uat: dict[str, Any], semaphore: asyncio.Semaphore) -> dict[st
         # TODO: spf
 
         classification = await classify(domain)
-        
+
         entry = {
             "siruta": uat["siruta"],
             "name": uat["name"],
@@ -732,16 +735,22 @@ async def fetch_uats() -> dict[str, dict[str, str]]:
             entry["email"] = wikidata_uat[siruta].get("email", "")
         uats[siruta] = entry
 
-    logger.info("Total UATs with website info: {}", sum(1 for m in uats.values() if m["website"]))
-    logger.info("Total UATs with email info: {}", sum(1 for m in uats.values() if m["email"]))
-    logger.info("UATs with no website or email info: {}", [m["name"] for m in uats.values() if not m["website"] and not m["email"]])
+    logger.info(
+        "Total UATs with website info: {}",
+        sum(1 for m in uats.values() if m["website"]),
+    )
+    logger.info(
+        "Total UATs with email info: {}", sum(1 for m in uats.values() if m["email"])
+    )
+    logger.info(
+        "UATs with no website or email info: {}",
+        [m["name"] for m in uats.values() if not m["website"] and not m["email"]],
+    )
 
     # Log AUTs in ancpi but missing from Wikidata
     ancpi_only = set(ancpi_uat) - set(wikidata_uat)
     if ancpi_only:
-        logger.warning(
-            "{} AUTs in ANCPI but missing from Wikidata", len(ancpi_only)
-        )
+        logger.warning("{} AUTs in ANCPI but missing from Wikidata", len(ancpi_only))
         for siruta in sorted(ancpi_only, key=int):
             m = ancpi_uat[siruta]
             logger.warning("    {:>5}  {}", siruta, m["name"])
@@ -750,14 +759,13 @@ async def fetch_uats() -> dict[str, dict[str, str]]:
     # Log AUTs in Wikidata but not in BFS (potentially dissolved)
     wikidata_only = set(wikidata_uat) - set(ancpi_uat)
     if wikidata_only:
-        logger.warning(
-            "{} AUTs in Wikidata but missing from ANCPI", len(wikidata_only)
-        )
+        logger.warning("{} AUTs in Wikidata but missing from ANCPI", len(wikidata_only))
         for siruta in sorted(wikidata_only, key=int):
             m = wikidata_uat[siruta]
             logger.warning("    {:>5}  {}", siruta, m["name"])
 
     return uats
+
 
 async def run(output_path: Path) -> None:
     uats = await fetch_uats()
@@ -767,11 +775,12 @@ async def run(output_path: Path) -> None:
 
     semaphore = asyncio.Semaphore(CONCURRENCY_POSTPROCESS)
     tasks = [scan_uat(uat, semaphore) for uat in uats.values()]
-    
+
     results = {}
     for coro in asyncio.as_completed(tasks):
         result = await coro
-        logger.info("Scanned UAT {} ({}): domain={} mx={} provider={}",
+        logger.info(
+            "Scanned UAT {} ({}): domain={} mx={} provider={}",
             result.get("siruta", ""),
             result.get("name", ""),
             result.get("domain", ""),
@@ -785,7 +794,7 @@ async def run(output_path: Path) -> None:
     for r in results.values():
         provider = r.get("provider", "none")
         counts[provider] = counts.get(provider, 0) + 1
-    
+
     sorted_counts = dict(sorted(counts.items(), key=lambda item: item[1], reverse=True))
     logger.info("--- Email provider classification ---")
     for provider, count in sorted_counts.items():
@@ -793,7 +802,6 @@ async def run(output_path: Path) -> None:
     with open(output_path, "w", encoding="utf-8") as f:
         json.dump(results, f, ensure_ascii=False, indent=2)
     logger.info("Results saved to {}", output_path)
-
 
     # results: dict[str, dict[str, Any]] = {}
     # done = 0
