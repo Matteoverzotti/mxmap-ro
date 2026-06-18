@@ -21,6 +21,7 @@ PROVIDER_OUTPUT_NAMES: dict[str, str] = {
 _CATEGORY_MAP: dict[str, str] = {
     "microsoft": "us-cloud",
     "google": "us-cloud",
+    "yahoo": "yahoo",
     "aws": "us-cloud",
     "infomaniak": "swiss-based",
     "swiss-isp": "swiss-based",

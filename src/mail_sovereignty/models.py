@@ -10,6 +10,7 @@ from pydantic import BaseModel, ConfigDict, Field
 class Provider(str, enum.Enum):
     MS365 = "ms365"
     GOOGLE = "google"
+    YAHOO = "yahoo"
     AWS = "aws"
     INFOMANIAK = "infomaniak"
     SWISS_ISP = "swiss-isp"

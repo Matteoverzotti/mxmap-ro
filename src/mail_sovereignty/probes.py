@@ -64,14 +64,20 @@ def probe_mx(mx_hosts: list[str]) -> list[Evidence]:
 
 
 def extract_spf_evidence(spf_raw: str) -> list[Evidence]:
-    """Match include: directives in an already-fetched SPF string."""
+    """Match include: and redirect= directives in an already-fetched SPF string."""
     results: list[Evidence] = []
     if not spf_raw:
         return results
     for token in spf_raw.split():
-        if not token.lower().startswith("include:"):
+        token_lower = token.lower()
+        if token_lower.startswith("include:"):
+            mechanism = "include"
+            include_val = token.split(":", 1)[1]
+        elif token_lower.startswith("redirect="):
+            mechanism = "redirect"
+            include_val = token.split("=", 1)[1]
+        else:
             continue
-        include_val = token.split(":", 1)[1]
         for sig in SIGNATURES:
             if match_patterns(include_val, sig.spf_includes):
                 results.append(
@@ -79,7 +85,7 @@ def extract_spf_evidence(spf_raw: str) -> list[Evidence]:
                         kind=SignalKind.SPF,
                         provider=sig.provider,
                         weight=WEIGHTS[SignalKind.SPF],
-                        detail=f"SPF include:{include_val} matches {sig.provider.value}",
+                        detail=f"SPF {mechanism}:{include_val} matches {sig.provider.value}",
                         raw=spf_raw,
                     )
                 )

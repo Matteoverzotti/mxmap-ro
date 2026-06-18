@@ -87,11 +87,13 @@ document.addEventListener('DOMContentLoaded', function () {
 const COLOR_SCHEMES = {
   default: {
     'us-cloud':    { high: '#ff9e91', medium: '#ffccaa', low: '#cccccc' },
+    yahoo:         { high: '#b78cff', medium: '#d9c4ff', low: '#cccccc' },
     'swiss-based': { high: '#88faaa', medium: '#daffc2', low: '#cccccc' },
     lake: '#a3cef1',
   },
   colorblind: {
     'us-cloud':    { high: '#f1be61', medium: '#fde7c4', low: '#cccccc' },
+    yahoo:         { high: '#8f7ad9', medium: '#d7cff5', low: '#cccccc' },
     'swiss-based': { high: '#6fa2d0', medium: '#C0D8E8', low: '#cccccc' },
     lake: '#c4afff',
   },
@@ -115,6 +117,7 @@ const LABELS = {
   ms365:          'Microsoft 365',
   microsoft:      'Microsoft 365',
   google:         'Google Workspace',
+  yahoo:          'Yahoo Mail',
   aws:            'Amazon Web Services',
   infomaniak:     'Infomaniak',
   'swiss-isp':    'Swiss ISP',
@@ -125,10 +128,32 @@ const LABELS = {
 
 function effectiveCategory(m) {
   if (!m) return null;
+  if (isYahooMail(m)) return 'yahoo';
+  if (isGoogleMail(m)) return 'us-cloud';
   if (m.category && m.category !== 'unknown') return m.category;
   if (['ms365', 'microsoft', 'google', 'aws'].includes(m.provider)) return 'us-cloud';
   if (['independent', 'infomaniak', 'swiss-isp'].includes(m.provider)) return 'swiss-based';
   return null;
+}
+
+function effectiveProvider(m) {
+  if (isGoogleMail(m)) return 'google';
+  if (isYahooMail(m)) return 'yahoo';
+  return m ? m.provider : null;
+}
+
+function isGoogleMail(m) {
+  if (!m) return false;
+  if (m.provider === 'google') return true;
+  const hosts = (m.mx || []).join(' ') + ' ' + (m.spf || '') + ' ' + (m.domain || '');
+  return /(aspmx\.l\.google\.com|gmail-smtp-in\.l\.google\.com|googlemail\.com|_spf\.google\.com|gmail\.com)/i.test(hosts);
+}
+
+function isYahooMail(m) {
+  if (!m) return false;
+  if (m.provider === 'yahoo') return true;
+  const hosts = (m.mx || []).join(' ') + ' ' + (m.spf || '') + ' ' + (m.domain || '');
+  return /(^|[.\s_-])(yahoo|ymail|yahoodns)([.\s_-]|$)/i.test(hosts);
 }
 
 function confidenceLevel(confidence) {
@@ -153,6 +178,8 @@ function classifyHost(host) {
     return { name: 'Microsoft', category: 'hyperscaler' };
   if (['google','googlemail','gmail','aspmx.l.google.com','_spf.google.com'].some(k => h.includes(k)))
     return { name: 'Google', category: 'hyperscaler' };
+  if (['yahoo','ymail','yahoodns','_spf.mail.yahoo.com'].some(k => h.includes(k)))
+    return { name: 'Yahoo Mail', category: 'yahoo' };
   if (['amazonaws','amazonses','awsdns'].some(k => h.includes(k)))
     return { name: 'AWS', category: 'hyperscaler' };
   // Swiss (explicit)
@@ -411,9 +438,10 @@ async function loadData() {
   showGenerated(dnsData);
 
   // Count by jurisdiction and confidence level
-  const catCounts = { 'us-cloud': 0, 'swiss-based': 0 };
+  const catCounts = { 'us-cloud': 0, yahoo: 0, 'swiss-based': 0 };
   const levelCounts = {
     'us-cloud': { high: 0, medium: 0, low: 0 },
+    yahoo: { high: 0, medium: 0, low: 0 },
     'swiss-based': { high: 0, medium: 0, low: 0 }
   };
   for (const bfs of Object.keys(muni)) {
@@ -436,6 +464,7 @@ async function loadData() {
       '<button class="legend-toggle" aria-label="Toggle legend" aria-expanded="' + (!isMobile) + '">' + (isMobile ? 'Legend \u25B8' : '') + '</button>' +
       '<div class="legend-content">' +
       legendCategoryHtml('US Cloud', CATEGORY_COLORS['us-cloud'], catCounts['us-cloud'], 'us-cloud', levelCounts['us-cloud']) +
+      legendCategoryHtml('Yahoo Mail', CATEGORY_COLORS.yahoo, catCounts.yahoo, 'yahoo', levelCounts.yahoo) +
       legendCategoryHtml('Independent / Local', CATEGORY_COLORS['swiss-based'], catCounts['swiss-based'], 'swiss-based', levelCounts['swiss-based']) +
       '<div class="legend-group legend-other">' +
       '<i class="legend-swatch" data-lake="1" style="background:' + CATEGORY_COLORS.lake + '"></i>Lake (not a municipality)' +
@@ -478,7 +507,8 @@ async function loadData() {
       const cat = effectiveCategory(m);
       const level = confidenceLevel(m.classification_confidence || 0);
       const textColor = '#000';
-      const label = LABELS[m.provider] || m.provider;
+      const providerKey = effectiveProvider(m);
+      const label = LABELS[providerKey] || providerKey;
 
       const showBody = isMobile ? 'display:none' : '';
 

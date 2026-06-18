@@ -43,7 +43,12 @@ SIGNATURES: list[ProviderSignature] = [
     ),
     ProviderSignature(
         provider=Provider.GOOGLE,
-        mx_patterns=("aspmx.l.google.com", "googlemail.com", "smtp.google.com"),
+        mx_patterns=(
+            "aspmx.l.google.com",
+            "gmail-smtp-in.l.google.com",
+            "googlemail.com",
+            "smtp.google.com",
+        ),
         spf_includes=("_spf.google.com",),
         dkim_selectors=("google", "google2048"),
         dkim_cname_patterns=("domainkey.google.com",),
@@ -53,6 +58,19 @@ SIGNATURES: list[ProviderSignature] = [
         smtp_banner_patterns=("mx.google.com", "google esmtp"),
         txt_verification_patterns=("google-site-verification=",),
         asns=(15169, 396982),
+    ),
+    ProviderSignature(
+        provider=Provider.YAHOO,
+        mx_patterns=("yahoodns.net", "yahoodns.com", "mx-eu.mail.am0.yahoodns.net"),
+        spf_includes=("_spf.mail.yahoo.com",),
+        dkim_selectors=("yahoo", "ymail"),
+        dkim_cname_patterns=("yahoodns.net", "yahoo.com"),
+        autodiscover_patterns=(),
+        cname_patterns=("yahoodns.net", "yahoo.com", "ymail.com"),
+        dmarc_patterns=(),
+        smtp_banner_patterns=("yahoodns.net", "yahoo"),
+        txt_verification_patterns=(),
+        asns=(),
     ),
     ProviderSignature(
         provider=Provider.AWS,
