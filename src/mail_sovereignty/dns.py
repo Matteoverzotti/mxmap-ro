@@ -83,6 +83,7 @@ async def resolve_robust(qname: str, rdtype: str) -> dns.resolver.Answer | None:
     return None
 
 
+# TODO: refactor this
 async def lookup_mx(domain: str) -> list[str]:
     """Return list of MX exchange hostnames."""
     answer = await resolve_robust(domain, "MX")

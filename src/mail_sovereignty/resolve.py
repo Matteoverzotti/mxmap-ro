@@ -23,17 +23,22 @@ from mail_sovereignty.constants import (
     TYPO3_RE,
 )
 from mail_sovereignty.dns import lookup_mx
+from mail_sovereignty.classifier import classify
 
 
-def url_to_domain(url: str | None) -> str | None:
+def url_to_domain(url: str) -> str:
     """Extract the base domain from a URL."""
-    if not url:
-        return None
+    assert url, "URL must not be empty"
+
     parsed = urlparse(url if "://" in url else f"https://{url}")
     host = parsed.hostname or ""
     if host.startswith("www."):
         host = host[4:]
-    return host if host else None
+    return host
+
+def email_to_domain(email: str) -> str:
+    """Extract the domain from an email address."""
+    return email.split("@")[1].lower().rstrip("\\/.")
 
 
 def _slugify_name(name: str) -> set[str]:
@@ -342,14 +347,6 @@ async def fetch_wikidata() -> dict[str, dict[str, str]]:
     return uats
 
 
-def load_overrides(overrides_path: Path) -> dict[str, dict[str, str]]:
-    """Load manual overrides from JSON file."""
-    if not overrides_path.exists():
-        return {}
-    with open(overrides_path, encoding="utf-8") as f:
-        return json.load(f)
-
-
 def decrypt_typo3(encoded: str, offset: int = 2) -> str:
     """Decrypt TYPO3 linkTo_UnCryptMailto Caesar cipher.
 
@@ -537,14 +534,12 @@ async def scrape_email_domains(
 
 async def resolve_municipality_domain(
     m: dict[str, str],
-    overrides: dict[str, dict[str, str]],
     client: httpx.AsyncClient,
 ) -> dict[str, Any]:
     """Resolve a municipality's email domain using multiple sources.
 
-    1. Override -> immediate win, confidence: high
-    2. Collect from scrape, wikidata, guess sources
-    3. Score agreement to pick best domain
+    1. Collect from scrape, wikidata, guess sources
+    2. Score agreement to pick best domain
     """
     bfs = m["bfs"]
     name = m["name"]
@@ -555,18 +550,6 @@ async def resolve_municipality_domain(
         "name": name,
         "canton": canton,
     }
-
-    # 1. Check overrides (immediate win)
-    if bfs in overrides:
-        override = overrides[bfs]
-        domain = override["domain"]
-        mx = await lookup_mx(domain) if domain else []
-        entry["domain"] = domain
-        entry["source"] = "override"
-        entry["confidence"] = "high" if (mx or not domain) else "medium"
-        entry["sources_detail"] = {"override": [domain] if domain else []}
-        entry["flags"] = []
-        return entry
 
     # 2. Collect from multiple sources
     website_domain = url_to_domain(m.get("website", ""))
@@ -640,7 +623,50 @@ def fetch_ancpi_uat() -> dict[str, dict[str, str]]:
 
     return uats
 
-async def run(output_path: Path) -> None:
+async def scan_uat(uat: dict[str, Any], semaphore: asyncio.Semaphore) -> dict[str, Any]:
+    """Scan a single municipality for email provider info."""
+    async with semaphore:
+        if not uat.get("website") and not uat.get("email"):
+            logger.info("Skipping UAT {} ({}): no website or email", uat["siruta"], uat["name"])
+            return {
+                "siruta": uat["siruta"],
+                "name": uat["name"],
+                "domain": "",
+                "mx": [],
+                "spf": "",
+                "provider": "none",
+                "classification_confidence": 0.0,
+                "classification_signals": [],
+            }
+        
+        domain = ""
+        if uat.get("email"):
+            domain = email_to_domain(uat["email"])
+        else:
+            domain = url_to_domain(uat["website"])
+        # TODO: spf
+
+        classification = await classify(domain)
+        
+        entry = {
+            "siruta": uat["siruta"],
+            "name": uat["name"],
+            "domain": domain,
+            "mx": classification.mx_hosts,
+            "spf": classification.spf_raw,
+            "provider": classification.provider.value,
+            "classification_confidence": round(classification.confidence * 100, 1),
+            "classification_signals": [
+                signal.model_dump(mode="json") for signal in classification.evidence
+            ],
+        }
+        if classification.gateway:
+            entry["gateway"] = classification.gateway
+        return entry
+
+
+async def fetch_uats() -> dict[str, dict[str, str]]:
+    """Fetch UAT's from both ANCPI and Wikidata, and merge them."""
     ancpi_uat = fetch_ancpi_uat()
 
     # Wikidata provides website URLs and email addresses
@@ -648,10 +674,10 @@ async def run(output_path: Path) -> None:
 
     # Merge: for each ancpi uat, attach Wikidata website and email if available
     uats: dict[str, dict[str, Any]] = {}
-    for siruta, name in ancpi_uat.items():
+    for siruta, item in ancpi_uat.items():
         entry: dict[str, Any] = {
             "siruta": siruta,
-            "name": name,
+            "name": item["name"],
             "website": "",
             "email": "",
         }
@@ -659,6 +685,10 @@ async def run(output_path: Path) -> None:
             entry["website"] = wikidata_uat[siruta].get("website", "")
             entry["email"] = wikidata_uat[siruta].get("email", "")
         uats[siruta] = entry
+
+    logger.info("Total UATs with website info: {}", sum(1 for m in uats.values() if m["website"]))
+    logger.info("Total UATs with email info: {}", sum(1 for m in uats.values() if m["email"]))
+    logger.info("UATs with no website or email info: {}", [m["name"] for m in uats.values() if not m["website"] and not m["email"]])
 
     # Log AUTs in ancpi but missing from Wikidata
     ancpi_only = set(ancpi_uat) - set(wikidata_uat)
@@ -681,146 +711,168 @@ async def run(output_path: Path) -> None:
             m = wikidata_uat[siruta]
             logger.warning("    {:>5}  {}", siruta, m["name"])
 
+    return uats
+
+async def run(output_path: Path) -> None:
+    uats = await fetch_uats()
     total = len(uats)
-    logger.info("Resolving email domains for {} AUTs", total)
 
-    # Use a shared client for scraping with limited concurrency
-    scrape_semaphore = asyncio.Semaphore(CONCURRENCY_POSTPROCESS)
+    print(f"\nScanning {total} UATs for MX/SPF records. This can take a few minutes...")
 
-    async def _resolve_with_shared_client(
-        m: dict[str, str], shared_client: httpx.AsyncClient
-    ) -> dict[str, Any] | None:
-        async with scrape_semaphore:
-            try:
-                return await resolve_municipality_domain(m, overrides, shared_client)
-            except Exception:
-                logger.exception("Resolution failed for {} ({})", m["name"], m["bfs"])
-                return None
-
-    results: dict[str, dict[str, Any]] = {}
-    done = 0
-    skipped = 0
-
-    async with httpx.AsyncClient(
-        headers={"User-Agent": "mxmap.ch/1.0 (https://github.com/davidhuser/mxmap)"},
-        follow_redirects=True,
-    ) as shared_client:
-        tasks = [
-            _resolve_with_shared_client(m, shared_client)
-            for m in municipalities.values()
-        ]
-
-        for coro in asyncio.as_completed(tasks):
-            result = await coro
-            if result is None:
-                skipped += 1
-                continue
-            results[result["bfs"]] = result
-            done += 1
-            counts: dict[str, int] = {}
-            for r in results.values():
-                counts[r["source"]] = counts.get(r["source"], 0) + 1
-            logger.info(
-                "[{:>4}/{}] {} ({}): domain={} source={} confidence={}",
-                done,
-                total,
-                result["name"],
-                result["bfs"],
-                result.get("domain", ""),
-                result.get("source", ""),
-                result.get("confidence", ""),
-            )
-
-    if skipped:
-        logger.warning("Skipped {} municipalities due to errors", skipped)
-
-    # Print summary
-    source_counts: dict[str, int] = {}
-    confidence_counts: dict[str, int] = {}
-    for r in results.values():
-        source_counts[r["source"]] = source_counts.get(r["source"], 0) + 1
-        confidence_counts[r["confidence"]] = (
-            confidence_counts.get(r["confidence"], 0) + 1
+    semaphore = asyncio.Semaphore(CONCURRENCY_POSTPROCESS)
+    tasks = [scan_uat(uat, semaphore) for uat in uats.values()]
+    
+    results = {}
+    for coro in asyncio.as_completed(tasks):
+        result = await coro
+        logger.info("Scanned UAT {} ({}): domain={} mx={} provider={}",
+            result.get("siruta", ""),
+            result.get("name", ""),
+            result.get("domain", ""),
+            result.get("mx", ""),
+            result.get("provider", ""),
         )
 
-    logger.info("--- Domain resolution: {} municipalities ---", len(results))
-    logger.info("By source:")
-    for source in ["override", "wikidata", "scrape", "redirect", "guess", "none"]:
-        logger.info("  {:<12} {:>5}", source, source_counts.get(source, 0))
-    logger.info("By confidence:")
-    for conf in ["high", "medium", "low", "none"]:
-        logger.info("  {:<12} {:>5}", conf, confidence_counts.get(conf, 0))
+        results[result["siruta"]] = result
 
-    # Print flagged entries for review (skip overridden — already confirmed)
-    unreviewed = {
-        bfs: r for bfs, r in results.items() if bfs not in overrides and r.get("flags")
-    }
-
-    disagreements = [r for r in unreviewed.values() if "sources_disagree" in r["flags"]]
-    if disagreements:
-        logger.warning("{} domains with source disagreement:", len(disagreements))
-        for r in sorted(disagreements, key=lambda x: int(x["bfs"])):
-            logger.warning(
-                "  {:>5}  {:<30} {:<20} domain={}  sources={}",
-                r["bfs"],
-                r["name"],
-                r["canton"],
-                r["domain"],
-                r.get("sources_detail", {}),
-            )
-
-    mismatches = [r for r in unreviewed.values() if "website_mismatch" in r["flags"]]
-    if mismatches:
-        logger.warning("{} domains with website mismatch:", len(mismatches))
-        for r in sorted(mismatches, key=lambda x: int(x["bfs"])):
-            logger.warning(
-                "  {:>5}  {:<30} {:<20} domain={}",
-                r["bfs"],
-                r["name"],
-                r["canton"],
-                r["domain"],
-            )
-
-    guess_only = [r for r in unreviewed.values() if "guess_only" in r["flags"]]
-    if guess_only:
-        logger.warning("{} domains resolved by guess only:", len(guess_only))
-        for r in sorted(guess_only, key=lambda x: int(x["bfs"])):
-            logger.warning(
-                "  {:>5}  {:<30} {:<20} domain={}",
-                r["bfs"],
-                r["name"],
-                r["canton"],
-                r["domain"],
-            )
-
-    # Print low confidence and unresolved entries for review
-    low_entries = [
-        r
-        for bfs, r in results.items()
-        if bfs not in overrides and r["confidence"] in ("low", "none")
-    ]
-    if low_entries:
-        logger.warning("{} domains needing review:", len(low_entries))
-        for r in sorted(low_entries, key=lambda x: int(x["bfs"])):
-            logger.warning(
-                "  {:>5}  {:<30} {:<20} domain={}  source={}",
-                r["bfs"],
-                r["name"],
-                r["canton"],
-                r["domain"] or "(none)",
-                r["source"],
-            )
-
-    sorted_results = dict(sorted(results.items(), key=lambda kv: int(kv[0])))
-
-    output = {
-        "generated": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
-        "total": len(results),
-        "municipalities": sorted_results,
-    }
-
+    counts = {}
+    for r in results.values():
+        provider = r.get("provider", "none")
+        counts[provider] = counts.get(provider, 0) + 1
+    
+    sorted_counts = dict(sorted(counts.items(), key=lambda item: item[1], reverse=True))
+    logger.info("--- Email provider classification ---")
+    for provider, count in sorted_counts.items():
+        logger.info("  {:<20} {:>5}", provider, count)
     with open(output_path, "w", encoding="utf-8") as f:
-        json.dump(output, f, ensure_ascii=False, indent=2)
+        json.dump(results, f, ensure_ascii=False, indent=2)
+    logger.info("Results saved to {}", output_path)
 
-    size_kb = len(json.dumps(output, ensure_ascii=False)) / 1024
-    logger.info("Wrote {} ({} KB)", output_path, size_kb)
+
+    # results: dict[str, dict[str, Any]] = {}
+    # done = 0
+    # skipped = 0
+
+    # async with httpx.AsyncClient(
+    #     headers={"User-Agent": "mxmap.ch/1.0 (https://github.com/davidhuser/mxmap)"},
+    #     follow_redirects=True,
+    # ) as shared_client:
+    #     tasks = [
+    #         _resolve_with_shared_client(m, shared_client)
+    #         for m in municipalities.values()
+    #     ]
+
+    #     for coro in asyncio.as_completed(tasks):
+    #         result = await coro
+    #         if result is None:
+    #             skipped += 1
+    #             continue
+    #         results[result["bfs"]] = result
+    #         done += 1
+    #         counts: dict[str, int] = {}
+    #         for r in results.values():
+    #             counts[r["source"]] = counts.get(r["source"], 0) + 1
+    #         logger.info(
+    #             "[{:>4}/{}] {} ({}): domain={} source={} confidence={}",
+    #             done,
+    #             total,
+    #             result["name"],
+    #             result["bfs"],
+    #             result.get("domain", ""),
+    #             result.get("source", ""),
+    #             result.get("confidence", ""),
+    #         )
+
+    # if skipped:
+    #     logger.warning("Skipped {} municipalities due to errors", skipped)
+
+    # # Print summary
+    # source_counts: dict[str, int] = {}
+    # confidence_counts: dict[str, int] = {}
+    # for r in results.values():
+    #     source_counts[r["source"]] = source_counts.get(r["source"], 0) + 1
+    #     confidence_counts[r["confidence"]] = (
+    #         confidence_counts.get(r["confidence"], 0) + 1
+    #     )
+
+    # logger.info("--- Domain resolution: {} municipalities ---", len(results))
+    # logger.info("By source:")
+    # for source in ["override", "wikidata", "scrape", "redirect", "guess", "none"]:
+    #     logger.info("  {:<12} {:>5}", source, source_counts.get(source, 0))
+    # logger.info("By confidence:")
+    # for conf in ["high", "medium", "low", "none"]:
+    #     logger.info("  {:<12} {:>5}", conf, confidence_counts.get(conf, 0))
+
+    # # Print flagged entries for review (skip overridden — already confirmed)
+    # unreviewed = {
+    #     bfs: r for bfs, r in results.items() if bfs not in overrides and r.get("flags")
+    # }
+
+    # disagreements = [r for r in unreviewed.values() if "sources_disagree" in r["flags"]]
+    # if disagreements:
+    #     logger.warning("{} domains with source disagreement:", len(disagreements))
+    #     for r in sorted(disagreements, key=lambda x: int(x["bfs"])):
+    #         logger.warning(
+    #             "  {:>5}  {:<30} {:<20} domain={}  sources={}",
+    #             r["bfs"],
+    #             r["name"],
+    #             r["canton"],
+    #             r["domain"],
+    #             r.get("sources_detail", {}),
+    #         )
+
+    # mismatches = [r for r in unreviewed.values() if "website_mismatch" in r["flags"]]
+    # if mismatches:
+    #     logger.warning("{} domains with website mismatch:", len(mismatches))
+    #     for r in sorted(mismatches, key=lambda x: int(x["bfs"])):
+    #         logger.warning(
+    #             "  {:>5}  {:<30} {:<20} domain={}",
+    #             r["bfs"],
+    #             r["name"],
+    #             r["canton"],
+    #             r["domain"],
+    #         )
+
+    # guess_only = [r for r in unreviewed.values() if "guess_only" in r["flags"]]
+    # if guess_only:
+    #     logger.warning("{} domains resolved by guess only:", len(guess_only))
+    #     for r in sorted(guess_only, key=lambda x: int(x["bfs"])):
+    #         logger.warning(
+    #             "  {:>5}  {:<30} {:<20} domain={}",
+    #             r["bfs"],
+    #             r["name"],
+    #             r["canton"],
+    #             r["domain"],
+    #         )
+
+    # # Print low confidence and unresolved entries for review
+    # low_entries = [
+    #     r
+    #     for bfs, r in results.items()
+    #     if bfs not in overrides and r["confidence"] in ("low", "none")
+    # ]
+    # if low_entries:
+    #     logger.warning("{} domains needing review:", len(low_entries))
+    #     for r in sorted(low_entries, key=lambda x: int(x["bfs"])):
+    #         logger.warning(
+    #             "  {:>5}  {:<30} {:<20} domain={}  source={}",
+    #             r["bfs"],
+    #             r["name"],
+    #             r["canton"],
+    #             r["domain"] or "(none)",
+    #             r["source"],
+    #         )
+
+    # sorted_results = dict(sorted(results.items(), key=lambda kv: int(kv[0])))
+
+    # output = {
+    #     "generated": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+    #     "total": len(results),
+    #     "municipalities": sorted_results,
+    # }
+
+    # with open(output_path, "w", encoding="utf-8") as f:
+    #     json.dump(output, f, ensure_ascii=False, indent=2)
+
+    # size_kb = len(json.dumps(output, ensure_ascii=False)) / 1024
+    # logger.info("Wrote {} ({} KB)", output_path, size_kb)
