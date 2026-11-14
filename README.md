@@ -2,6 +2,10 @@
 
 [![CI](https://github.com/davidhuser/mxmap/actions/workflows/ci.yml/badge.svg)](https://github.com/davidhuser/mxmap/actions/workflows/ci.yml)
 
+> [!IMPORTANT]
+> This is a public archive containing an initial implementation for this project.
+> Since then, because of GitHub's [AI training on public repositories](https://github.com/features/copilot/plans), the development has shifted to [Codeberg](https://codeberg.org/Matteo_Verz/mxmap-ro).
+
 Interactive maps showing where Swiss municipalities host their email and how deeply their DNS is tied to US hyperscalers (Microsoft, Google, AWS) versus Swiss providers and self-hosted solutions.
 
 **[View the live maps](https://mxmap.ch)**
